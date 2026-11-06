@@ -707,7 +707,7 @@ unsigned char *lpGetValue(unsigned char *p, unsigned int *slen, long long *lval)
 
 /* Find pointer to the entry equal to the specified entry. Skip 'skip' entries
  * between every comparison. Returns NULL when the field could not be found. */
-unsigned char *lpFind(unsigned char *lp, unsigned char *p, unsigned char *s, uint32_t slen, unsigned int skip) {
+static inline unsigned char *lpFindInternal(unsigned char *lp, unsigned char *p, unsigned char *s, uint32_t slen, unsigned int skip, int short_strings) {
     int skipcnt = 0;
     unsigned char vencoding = 0;
     unsigned char *value;
@@ -730,7 +730,16 @@ unsigned char *lpFind(unsigned char *lp, unsigned char *p, unsigned char *s, uin
         }
 
         if (skipcnt == 0) {
-            value = lpGetWithSize(p, &ll, NULL, &entry_size);
+            /* Short strings carry their length in the encoding byte and
+             * always use a single backlen byte. Avoid the generic decoder
+             * while retaining the same bounds checks below. */
+            if (short_strings && LP_ENCODING_IS_6BIT_STR(p[0])) {
+                ll = LP_ENCODING_6BIT_STR_LEN(p);
+                entry_size = ll + 2;
+                value = p + 1;
+            } else {
+                value = lpGetWithSize(p, &ll, NULL, &entry_size);
+            }
             if (value) {
                 /* check the value doesn't reach outside the listpack before accessing it */
                 assert(p >= lp + LP_HDR_SIZE && p + entry_size < lp + lp_bytes);
@@ -768,7 +777,10 @@ unsigned char *lpFind(unsigned char *lp, unsigned char *p, unsigned char *s, uin
             skipcnt--;
 
             /* Move to next entry. */
-            p = lpSkip(p);
+            if (short_strings && LP_ENCODING_IS_6BIT_STR(p[0]))
+                p += LP_ENCODING_6BIT_STR_LEN(p) + 2;
+            else
+                p = lpSkip(p);
         }
 
         assert(p >= lp + LP_HDR_SIZE && p < lp + lp_bytes);
@@ -780,6 +792,14 @@ unsigned char *lpFind(unsigned char *lp, unsigned char *p, unsigned char *s, uin
     }
 
     return NULL;
+}
+
+unsigned char *lpFind(unsigned char *lp, unsigned char *p, unsigned char *s, uint32_t slen, unsigned int skip) {
+    assert(p);
+    /* Select the loop once so integer/long-entry searches do not pay for the
+     * short-string checks at each step. Both loops accept mixed encodings. */
+    if (LP_ENCODING_IS_6BIT_STR(p[0])) return lpFindInternal(lp, p, s, slen, skip, 1);
+    return lpFindInternal(lp, p, s, slen, skip, 0);
 }
 
 /* Insert, delete or replace the specified string element 'elestr' of length

@@ -985,6 +985,73 @@ TEST_F(ListpackTest, listpackLpFind) {
     lpFree(lp);
 }
 
+TEST_F(ListpackTest, listpackLpFindShortStringBoundaries) {
+    const size_t lengths[] = {0, 1, 2, 31, 63, 64};
+    const size_t value_lengths[] = {0, 1, 63, 64, 128};
+    unsigned char field[64];
+    unsigned char value[128];
+    memset(value, 'v', sizeof(value));
+    for (size_t i = 0; i < sizeof(field); i++) field[i] = (unsigned char)(i * 7);
+
+    for (size_t i = 0; i < sizeof(lengths) / sizeof(lengths[0]); i++) {
+        for (size_t j = 0; j < sizeof(value_lengths) / sizeof(value_lengths[0]); j++) {
+            unsigned char *lp = lpNew(0);
+            lp = lpAppend(lp, (unsigned char *)"head", 4);
+            lp = lpAppendInteger(lp, 42);
+            lp = lpAppend(lp, field, lengths[i]);
+            lp = lpAppend(lp, value, value_lengths[j]);
+
+            unsigned char intenc[LP_MAX_INT_ENCODING_LEN];
+            uint64_t enclen;
+            lpEncodeIntegerGetType(99, intenc, &enclen);
+            lp = lpInsertMetadata(lp, intenc, enclen, lp + lpBytes(lp) - 1, LP_BEFORE, NULL);
+            lp = lpAppend(lp, (unsigned char *)"tail", 4);
+
+            unsigned char *expected = lpSeek(lp, 2);
+            EXPECT_EQ(lpFind(lp, lpFirst(lp), field, lengths[i], 0), expected);
+            EXPECT_EQ(lpFind(lp, lpFirst(lp), field, lengths[i], 1), expected);
+            EXPECT_EQ(lpFind(lp, lpFirst(lp), (unsigned char *)"tail", 4, 1), lpLast(lp));
+            EXPECT_EQ(lpFind(lp, lpFirst(lp), (unsigned char *)"42", 2, 0), lpSeek(lp, 1));
+            EXPECT_EQ(lpFind(lp, lpFirst(lp), (unsigned char *)"42", 2, 1), nullptr);
+            EXPECT_EQ(lpFind(lp, lpFirst(lp), (unsigned char *)"99", 2, 0), nullptr);
+            EXPECT_EQ(lpFind(lp, lpFirst(lp), (unsigned char *)"absent", 6, 0), nullptr);
+            EXPECT_EQ(lpFind(lp, lpLast(lp), (unsigned char *)"absent", 6, 0), nullptr);
+            lpFree(lp);
+        }
+    }
+}
+
+TEST_F(ListpackTest, listpackLpFindMixedInitialEncodings) {
+    unsigned char long_value[128];
+    memset(long_value, 'x', sizeof(long_value));
+    for (int initial = 0; initial < 4; initial++) {
+        unsigned char *lp = lpNew(0);
+        if (initial == 0)
+            lp = lpAppend(lp, (unsigned char *)"head", 4);
+        else if (initial == 1)
+            lp = lpAppend(lp, long_value, sizeof(long_value));
+        else
+            lp = lpAppendInteger(lp, 42);
+        lp = lpAppendInteger(lp, 7);
+        lp = lpAppend(lp, (unsigned char *)"needle", 6);
+        lp = lpAppend(lp, long_value, sizeof(long_value));
+        lp = lpAppendInteger(lp, 99);
+        if (initial == 3) {
+            unsigned char intenc[LP_MAX_INT_ENCODING_LEN];
+            uint64_t enclen;
+            lpEncodeIntegerGetType(123, intenc, &enclen);
+            lp = lpInsertMetadata(lp, intenc, enclen, lpStart(lp), LP_BEFORE, NULL);
+        }
+        EXPECT_EQ(lpFind(lp, lpStart(lp), (unsigned char *)"needle", 6, 0), lpSeek(lp, 2));
+        EXPECT_EQ(lpFind(lp, lpStart(lp), (unsigned char *)"needle", 6, 1), lpSeek(lp, 2));
+        EXPECT_EQ(lpFind(lp, lpStart(lp), (unsigned char *)"99", 2, 1), lpLast(lp));
+        EXPECT_EQ(lpFind(lp, lpStart(lp), long_value, sizeof(long_value), 0),
+                  lpSeek(lp, initial == 1 ? 0 : 3));
+        EXPECT_EQ(lpFind(lp, lpStart(lp), (unsigned char *)"absent", 6, 0), nullptr);
+        lpFree(lp);
+    }
+}
+
 TEST_F(ListpackTest, listpackLpFindWithMetadata) {
     /* test lpFind with metadata fields */
     unsigned char *lp;
