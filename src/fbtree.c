@@ -1128,6 +1128,9 @@ sds fbtreePopMax(fbtreeIndex *fbt) {
     leafNode *leaf = fbt->rightmost_leaf;
     sds item = leaf->values[leaf->header.num_items - 1];
 
+    /* The following pop will use this surviving item as its new anchor. */
+    if (leaf->header.num_items > 2) valkey_prefetch(leaf->values[leaf->header.num_items - 3] - 1);
+
     /* Update cache before delete */
     if (leaf->header.num_items == 1)
         fbt->rightmost_leaf = leaf->prev;
